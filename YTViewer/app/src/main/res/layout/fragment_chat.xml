@@ -2,7 +2,7 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?android:attr/colorBackground">
+    android:background="#121212">
 
     <WebView
         android:id="@+id/webViewChat"
@@ -16,9 +16,9 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center"
         android:gravity="center"
-        android:text="🔴 聊天室僅在直播時可用\n\n請輸入直播網址查看聊天室"
+        android:text="🔴 聊天室僅在直播時可用&#10;&#10;請輸入直播網址查看聊天室"
         android:textSize="15sp"
-        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textColor="#AAAAAA"
         android:visibility="visible" />
 
 </FrameLayout>
