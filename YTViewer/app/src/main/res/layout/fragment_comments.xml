@@ -2,7 +2,7 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="?android:attr/colorBackground">
+    android:background="#121212">
 
     <TextView
         android:id="@+id/tvLoading"
@@ -11,7 +11,7 @@
         android:layout_gravity="center"
         android:text="載入留言中..."
         android:textSize="16sp"
-        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textColor="#AAAAAA"
         android:visibility="gone" />
 
     <TextView
@@ -23,8 +23,8 @@
         android:paddingHorizontal="16dp"
         android:paddingVertical="10dp"
         android:textSize="12sp"
-        android:textColor="?attr/colorOnSurfaceVariant"
-        android:background="@color/info_banner_bg"
+        android:textColor="#AAAAAA"
+        android:background="#2A2A00"
         android:visibility="gone" />
 
     <androidx.recyclerview.widget.RecyclerView
