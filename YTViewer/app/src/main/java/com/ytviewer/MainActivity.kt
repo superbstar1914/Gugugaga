@@ -99,33 +99,8 @@ class MainActivity : AppCompatActivity() {
         currentVideoId = videoId
         val isLive = YouTubeUrlParser.isLiveStream(url)
 
-        // Load via embed URL in WebView - bypasses 152-4 restriction
-        val embedHtml = """
-            <!DOCTYPE html>
-            <html>
-            <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-              * { margin:0; padding:0; background:#000; }
-              iframe { width:100%; height:100vh; border:none; }
-            </style>
-            </head>
-            <body>
-            <iframe src="https://www.youtube.com/embed/$videoId?autoplay=1&playsinline=1&rel=0"
-              allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-              allowfullscreen>
-            </iframe>
-            </body>
-            </html>
-        """.trimIndent()
-
-        binding.webPlayer.loadDataWithBaseURL(
-            "https://www.youtube.com",
-            embedHtml,
-            "text/html",
-            "utf-8",
-            null
-        )
+        
+        binding.webPlayer.loadUrl("https://m.youtube.com/watch?v=$videoId&autoplay=1")
 
         commentsFragment.loadComments(videoId)
         chatFragment.setVideoId(videoId, isLive)
