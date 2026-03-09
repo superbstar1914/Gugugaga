@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#121212">
+
+    <WebView
+        android:id="@+id/webViewChat"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/tvLiveOnly"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:text="&#x1F534; 聊天室僅在直播時可用&#10;&#10;請輸入直播網址查看聊天室"
+        android:textSize="15sp"
+        android:textColor="#AAAAAA"
+        android:visibility="visible" />
+
+</FrameLayout>
