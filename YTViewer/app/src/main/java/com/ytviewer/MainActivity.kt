@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Rational
 import android.view.View
+import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -62,6 +63,7 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebPlayer() {
+        WebView.setWebContentsDebuggingEnabled(false)
         binding.webPlayer.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -69,12 +71,41 @@ class MainActivity : AppCompatActivity() {
             loadWithOverviewMode = true
             useWideViewPort = true
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            userAgentString = "Mozilla/5.0 (Linux; Android 11; Pixel 5) " +
+            allowFileAccess = false
+            databaseEnabled = true
+            cacheMode = WebSettings.LOAD_DEFAULT
+            // Desktop user agent - prevents YouTube mobile auto-pause
+            userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                     "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                    "Chrome/120.0.0.0 Mobile Safari/537.36"
+                    "Chrome/120.0.0.0 Safari/537.36"
         }
-        binding.webPlayer.webChromeClient = WebChromeClient()
-        binding.webPlayer.webViewClient = WebViewClient()
+
+        binding.webPlayer.webChromeClient = object : WebChromeClient() {
+            override fun onPermissionRequest(request: PermissionRequest) {
+                request.grant(request.resources)
+            }
+        }
+
+        binding.webPlayer.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                // Inject JS to prevent auto-pause when app loses focus
+                view?.evaluateJavascript("""
+                    (function() {
+                        // Override visibility API to prevent pause on background
+                        Object.defineProperty(document, 'hidden', { get: function(){ return false; }});
+                        Object.defineProperty(document, 'visibilityState', { get: function(){ return 'visible'; }});
+                        document.addEventListener('visibilitychange', function(e){ e.stopImmediatePropagation(); }, true);
+                        
+                        // Auto-click play if paused
+                        setTimeout(function() {
+                            var video = document.querySelector('video');
+                            if (video && video.paused) { video.play(); }
+                        }, 2000);
+                    })();
+                """.trimIndent(), null)
+            }
+        }
     }
 
     private fun setupUrlInput() {
@@ -99,8 +130,8 @@ class MainActivity : AppCompatActivity() {
         currentVideoId = videoId
         val isLive = YouTubeUrlParser.isLiveStream(url)
 
-        
-        binding.webPlayer.loadUrl("https://m.youtube.com/watch?v=$videoId&autoplay=1")
+        // Desktop YouTube - no embed restrictions
+        binding.webPlayer.loadUrl("https://www.youtube.com/watch?v=$videoId&autoplay=1")
 
         commentsFragment.loadComments(videoId)
         chatFragment.setVideoId(videoId, isLive)
@@ -128,6 +159,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun enterPipMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Inject JS to keep video playing during PiP transition
+            binding.webPlayer.evaluateJavascript("""
+                (function() {
+                    var video = document.querySelector('video');
+                    if (video) {
+                        video.play();
+                        // Prevent pause events
+                        video.addEventListener('pause', function(e) {
+                            setTimeout(function(){ video.play(); }, 100);
+                        }, true);
+                    }
+                })();
+            """.trimIndent(), null)
+
             val pipParams = PictureInPictureParams.Builder()
                 .setAspectRatio(Rational(16, 9))
                 .build()
