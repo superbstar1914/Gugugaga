@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.YTViewer" parent="Theme.Material3.Dark.NoActionBar">
-        <item name="colorPrimary">@color/red_primary</item>
-        <item name="colorPrimaryDark">@color/red_dark</item>
-        <item name="colorAccent">@color/red_primary</item>
-        <item name="colorSurface">@color/surface_dark</item>
-        <item name="colorBackground">@color/bg_dark</item>
-        <item name="colorOnSurface">@color/on_surface_dark</item>
-        <item name="android:windowBackground">@color/bg_dark</item>
+    <style name="Theme.YTViewer" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="colorPrimary">#FF0000</item>
+        <item name="colorPrimaryDark">#CC0000</item>
+        <item name="colorAccent">#FF0000</item>
+        <item name="android:colorBackground">#121212</item>
+        <item name="android:windowBackground">#121212</item>
     </style>
 </resources>
