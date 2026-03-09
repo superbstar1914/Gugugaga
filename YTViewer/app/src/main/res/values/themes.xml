@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.YTViewer" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">#FF0000</item>
+        <item name="colorPrimaryDark">#CC0000</item>
+        <item name="colorAccent">#FF0000</item>
+        <item name="android:colorBackground">#F5F5F5</item>
+        <item name="android:windowBackground">#F5F5F5</item>
+    </style>
+</resources>
