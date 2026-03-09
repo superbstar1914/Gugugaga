@@ -5,7 +5,8 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:paddingHorizontal="14dp"
-    android:paddingVertical="10dp">
+    android:paddingVertical="10dp"
+    android:background="#121212">
 
     <ImageView
         android:id="@+id/ivAvatar"
@@ -23,7 +24,7 @@
         android:layout_height="wrap_content"
         android:textStyle="bold"
         android:textSize="13sp"
-        android:textColor="?attr/colorPrimary"
+        android:textColor="#FF4444"
         android:layout_marginStart="10dp"
         app:layout_constraintTop_toTopOf="@id/ivAvatar"
         app:layout_constraintStart_toEndOf="@id/ivAvatar"
@@ -34,7 +35,7 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:textSize="14sp"
-        android:textColor="?attr/colorOnSurface"
+        android:textColor="#E0E0E0"
         android:layout_marginStart="10dp"
         android:layout_marginTop="2dp"
         app:layout_constraintTop_toBottomOf="@id/tvAuthor"
@@ -46,7 +47,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:textSize="12sp"
-        android:textColor="?attr/colorOnSurfaceVariant"
+        android:textColor="#888888"
         android:layout_marginStart="10dp"
         android:layout_marginTop="4dp"
         app:layout_constraintTop_toBottomOf="@id/tvComment"
@@ -57,18 +58,16 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:textSize="11sp"
-        android:textColor="?attr/colorOutline"
+        android:textColor="#666666"
         android:layout_marginStart="8dp"
         app:layout_constraintTop_toTopOf="@id/tvLikes"
         app:layout_constraintStart_toEndOf="@id/tvLikes"
         app:layout_constraintBaseline_toBaselineOf="@id/tvLikes" />
 
-    <!-- Divider -->
     <View
         android:layout_width="match_parent"
         android:layout_height="1dp"
-        android:background="?attr/dividerColor"
-        android:alpha="0.4"
+        android:background="#333333"
         android:layout_marginTop="8dp"
         app:layout_constraintTop_toBottomOf="@id/tvLikes"
         app:layout_constraintStart_toStartOf="parent"
