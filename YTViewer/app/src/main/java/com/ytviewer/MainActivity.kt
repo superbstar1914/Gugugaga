@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
+import android.view.MotionEvent
 import android.view.View
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -17,6 +18,7 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.view.isVisible
 import com.google.android.material.tabs.TabLayout
 import com.ytviewer.databinding.ActivityMainBinding
@@ -29,6 +31,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var currentVideoId: String? = null
     private var isDarkMode = true
+    private var userIsTouching = false  // track touch state
 
     private val commentsFragment = CommentsFragment()
     private val chatFragment = ChatFragment()
@@ -61,9 +64,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     private fun setupWebPlayer() {
-        WebView.setWebContentsDebuggingEnabled(false)
         binding.webPlayer.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -71,13 +73,20 @@ class MainActivity : AppCompatActivity() {
             loadWithOverviewMode = true
             useWideViewPort = true
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            allowFileAccess = false
             databaseEnabled = true
             cacheMode = WebSettings.LOAD_DEFAULT
-            // Desktop user agent - prevents YouTube mobile auto-pause
             userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                     "AppleWebKit/537.36 (KHTML, like Gecko) " +
                     "Chrome/120.0.0.0 Safari/537.36"
+        }
+
+        // Track whether user is touching the screen
+        binding.webPlayer.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> userIsTouching = true
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> userIsTouching = false
+            }
+            false // don't consume the event
         }
 
         binding.webPlayer.webChromeClient = object : WebChromeClient() {
@@ -89,23 +98,52 @@ class MainActivity : AppCompatActivity() {
         binding.webPlayer.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                // Inject JS to prevent auto-pause when app loses focus
-                view?.evaluateJavascript("""
-                    (function() {
-                        // Override visibility API to prevent pause on background
-                        Object.defineProperty(document, 'hidden', { get: function(){ return false; }});
-                        Object.defineProperty(document, 'visibilityState', { get: function(){ return 'visible'; }});
-                        document.addEventListener('visibilitychange', function(e){ e.stopImmediatePropagation(); }, true);
-                        
-                        // Auto-click play if paused
-                        setTimeout(function() {
-                            var video = document.querySelector('video');
-                            if (video && video.paused) { video.play(); }
-                        }, 2000);
-                    })();
-                """.trimIndent(), null)
+                injectAntiPauseJs(view)
             }
         }
+    }
+
+    private fun injectAntiPauseJs(view: WebView?) {
+        view?.evaluateJavascript("""
+            (function() {
+                // Override visibility API
+                Object.defineProperty(document, 'hidden', { get: function(){ return false; }, configurable: true });
+                Object.defineProperty(document, 'visibilityState', { get: function(){ return 'visible'; }, configurable: true });
+                document.addEventListener('visibilitychange', function(e){ e.stopImmediatePropagation(); }, true);
+                
+                // Block pause only when not user-initiated
+                var video = document.querySelector('video');
+                if (video) {
+                    video._userPaused = false;
+                    video.addEventListener('pause', function(e) {
+                        if (!video._userPaused) {
+                            setTimeout(function(){ video.play(); }, 100);
+                        }
+                    });
+                    // Detect user click on video = intentional pause
+                    video.addEventListener('click', function() {
+                        video._userPaused = !video.paused;
+                    });
+                }
+                
+                // Re-check every 3s in case video element loads late
+                var tries = 0;
+                var interval = setInterval(function() {
+                    var v = document.querySelector('video');
+                    if (v && !v._patched) {
+                        v._patched = true;
+                        v._userPaused = false;
+                        v.addEventListener('pause', function() {
+                            if (!v._userPaused) setTimeout(function(){ v.play(); }, 100);
+                        });
+                        v.addEventListener('click', function() {
+                            v._userPaused = !v.paused;
+                        });
+                    }
+                    if (++tries > 10) clearInterval(interval);
+                }, 3000);
+            })();
+        """.trimIndent(), null)
     }
 
     private fun setupUrlInput() {
@@ -129,10 +167,7 @@ class MainActivity : AppCompatActivity() {
         }
         currentVideoId = videoId
         val isLive = YouTubeUrlParser.isLiveStream(url)
-
-        // Desktop YouTube - no embed restrictions
         binding.webPlayer.loadUrl("https://www.youtube.com/watch?v=$videoId&autoplay=1")
-
         commentsFragment.loadComments(videoId)
         chatFragment.setVideoId(videoId, isLive)
         binding.tabLayout.isVisible = true
@@ -159,17 +194,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun enterPipMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Inject JS to keep video playing during PiP transition
+            // Click fullscreen button in YouTube before entering PiP
             binding.webPlayer.evaluateJavascript("""
                 (function() {
                     var video = document.querySelector('video');
-                    if (video) {
-                        video.play();
-                        // Prevent pause events
-                        video.addEventListener('pause', function(e) {
-                            setTimeout(function(){ video.play(); }, 100);
-                        }, true);
-                    }
+                    if (video) { video.play(); }
+                    // Try clicking the fullscreen/theatre button to hide UI chrome
+                    var fsBtn = document.querySelector('.ytp-fullscreen-button');
+                    // Don't actually fullscreen, just ensure playing
                 })();
             """.trimIndent(), null)
 
@@ -190,31 +222,57 @@ class MainActivity : AppCompatActivity() {
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         if (isInPictureInPictureMode) {
-            // Hide everything except the video WebView
             binding.topBar.visibility = View.GONE
             binding.urlInputCard.visibility = View.GONE
             binding.tabLayout.visibility = View.GONE
             binding.fragmentContainer.visibility = View.GONE
-            // Make webPlayer fill the entire screen for PiP
-            val params = binding.webPlayer.layoutParams as androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
-            params.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+
+            // Expand webPlayer to fill entire screen
+            val params = binding.webPlayer.layoutParams as ConstraintLayout.LayoutParams
+            params.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
+            params.topToBottom = ConstraintLayout.LayoutParams.UNSET
+            params.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID
             params.dimensionRatio = null
-            params.height = 0
-            params.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+            params.height = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT
             binding.webPlayer.layoutParams = params
+            binding.webPlayer.requestLayout()
+
+            // Hide YouTube UI chrome via JS, keep only video
+            binding.webPlayer.evaluateJavascript("""
+                (function() {
+                    var style = document.getElementById('pip-style');
+                    if (!style) {
+                        style = document.createElement('style');
+                        style.id = 'pip-style';
+                        style.innerHTML = '#masthead-container, .ytp-chrome-top, .ytp-chrome-bottom, #below, #secondary, #comments, ytd-app > * > ytd-page-manager { display: none !important; } video { width: 100vw !important; height: 100vh !important; object-fit: contain; position: fixed; top:0; left:0; z-index:9999; background:#000; }';
+                        document.head.appendChild(style);
+                    }
+                })();
+            """.trimIndent(), null)
+
         } else {
+            // Restore layout
+            val params = binding.webPlayer.layoutParams as ConstraintLayout.LayoutParams
+            params.topToTop = ConstraintLayout.LayoutParams.UNSET
+            params.topToBottom = binding.topBar.id
+            params.bottomToBottom = ConstraintLayout.LayoutParams.UNSET
+            params.dimensionRatio = "16:9"
+            params.height = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT
+            binding.webPlayer.layoutParams = params
+            binding.webPlayer.requestLayout()
+
             binding.topBar.visibility = View.VISIBLE
             binding.urlInputCard.visibility = View.VISIBLE
             binding.tabLayout.isVisible = currentVideoId != null
             binding.fragmentContainer.isVisible = currentVideoId != null
-            // Restore webPlayer to 16:9 below topBar
-            val params = binding.webPlayer.layoutParams as androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
-            params.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
-            params.topToBottom = binding.topBar.id
-            params.dimensionRatio = "16:9"
-            params.height = 0
-            params.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
-            binding.webPlayer.layoutParams = params
+
+            // Remove the PiP CSS override
+            binding.webPlayer.evaluateJavascript("""
+                (function() {
+                    var style = document.getElementById('pip-style');
+                    if (style) style.remove();
+                })();
+            """.trimIndent(), null)
         }
     }
 
