@@ -7,6 +7,7 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Rational
 import android.view.MotionEvent
 import android.view.View
@@ -31,7 +32,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var currentVideoId: String? = null
     private var isDarkMode = true
-    private var userIsTouching = false  // track touch state
+    private var lastTouchTime = 0L
+    private val touchWindowMs = 1500L // 1.5秒內有碰過才算使用者暫停
 
     private val commentsFragment = CommentsFragment()
     private val chatFragment = ChatFragment()
@@ -47,6 +49,10 @@ class MainActivity : AppCompatActivity() {
         setupPipButton()
         setupTabs()
         setupFragments()
+        // 預設載入 rickroll
+        val defaultUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        binding.urlInputField.setText(defaultUrl)
+        loadVideo(defaultUrl)
         handleIntent(intent)
     }
 
@@ -80,13 +86,13 @@ class MainActivity : AppCompatActivity() {
                     "Chrome/120.0.0.0 Safari/537.36"
         }
 
-        // Track whether user is touching the screen
+        // 記錄最後一次碰觸時間
         binding.webPlayer.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> userIsTouching = true
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> userIsTouching = false
+            if (event.action == MotionEvent.ACTION_DOWN ||
+                event.action == MotionEvent.ACTION_MOVE) {
+                lastTouchTime = SystemClock.elapsedRealtime()
             }
-            false // don't consume the event
+            false
         }
 
         binding.webPlayer.webChromeClient = object : WebChromeClient() {
@@ -104,44 +110,46 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun injectAntiPauseJs(view: WebView?) {
+        // touchWindowMs 傳入 JS，暫停發生時若距離上次觸碰超過這個時間就阻擋
         view?.evaluateJavascript("""
             (function() {
+                var TOUCH_WINDOW = $touchWindowMs;
+                var lastTouch = 0;
+
+                // Android 端的 touch 時間會透過 interface 傳入，
+                // 這裡改用 pointerdown 自行追蹤
+                document.addEventListener('pointerdown', function() {
+                    lastTouch = Date.now();
+                }, true);
+
                 // Override visibility API
                 Object.defineProperty(document, 'hidden', { get: function(){ return false; }, configurable: true });
                 Object.defineProperty(document, 'visibilityState', { get: function(){ return 'visible'; }, configurable: true });
                 document.addEventListener('visibilitychange', function(e){ e.stopImmediatePropagation(); }, true);
-                
-                // Block pause only when not user-initiated
-                var video = document.querySelector('video');
-                if (video) {
-                    video._userPaused = false;
-                    video.addEventListener('pause', function(e) {
-                        if (!video._userPaused) {
-                            setTimeout(function(){ video.play(); }, 100);
+
+                function patchVideo(video) {
+                    if (video._patched) return;
+                    video._patched = true;
+                    video.addEventListener('pause', function() {
+                        var timeSinceTouch = Date.now() - lastTouch;
+                        // 300ms 內有碰過才是使用者主動暫停，否則是系統暫停要阻擋
+                        if (timeSinceTouch > 300) {
+                            setTimeout(function(){ if(video.paused) video.play(); }, 80);
                         }
                     });
-                    // Detect user click on video = intentional pause
-                    video.addEventListener('click', function() {
-                        video._userPaused = !video.paused;
-                    });
                 }
-                
-                // Re-check every 3s in case video element loads late
+
+                // 立刻 patch 現有 video
+                var v = document.querySelector('video');
+                if (v) patchVideo(v);
+
+                // 每 2 秒檢查有沒有新的 video 出現
                 var tries = 0;
                 var interval = setInterval(function() {
-                    var v = document.querySelector('video');
-                    if (v && !v._patched) {
-                        v._patched = true;
-                        v._userPaused = false;
-                        v.addEventListener('pause', function() {
-                            if (!v._userPaused) setTimeout(function(){ v.play(); }, 100);
-                        });
-                        v.addEventListener('click', function() {
-                            v._userPaused = !v.paused;
-                        });
-                    }
-                    if (++tries > 10) clearInterval(interval);
-                }, 3000);
+                    var v2 = document.querySelector('video');
+                    if (v2) patchVideo(v2);
+                    if (++tries > 15) clearInterval(interval);
+                }, 2000);
             })();
         """.trimIndent(), null)
     }
@@ -194,17 +202,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun enterPipMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Click fullscreen button in YouTube before entering PiP
             binding.webPlayer.evaluateJavascript("""
                 (function() {
-                    var video = document.querySelector('video');
-                    if (video) { video.play(); }
-                    // Try clicking the fullscreen/theatre button to hide UI chrome
-                    var fsBtn = document.querySelector('.ytp-fullscreen-button');
-                    // Don't actually fullscreen, just ensure playing
+                    var v = document.querySelector('video');
+                    if (v) v.play();
+                    // Theatre mode: hide all YouTube chrome so only video shows in PiP
+                    var s = document.getElementById('pip-style');
+                    if (!s) {
+                        s = document.createElement('style');
+                        s.id = 'pip-style';
+                        s.innerHTML = '#masthead-container, .ytp-chrome-top, .ytp-chrome-bottom, #below, #secondary, #comments, ytd-masthead, #page-manager > ytd-watch-flexy #secondary, ytd-watch-flexy #below { display: none !important; } video { width: 100vw !important; height: 100vh !important; object-fit: contain; position: fixed !important; top:0 !important; left:0 !important; z-index:99999; background:#000; }';
+                        document.head.appendChild(s);
+                    }
                 })();
             """.trimIndent(), null)
-
             val pipParams = PictureInPictureParams.Builder()
                 .setAspectRatio(Rational(16, 9))
                 .build()
@@ -227,7 +238,6 @@ class MainActivity : AppCompatActivity() {
             binding.tabLayout.visibility = View.GONE
             binding.fragmentContainer.visibility = View.GONE
 
-            // Expand webPlayer to fill entire screen
             val params = binding.webPlayer.layoutParams as ConstraintLayout.LayoutParams
             params.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
             params.topToBottom = ConstraintLayout.LayoutParams.UNSET
@@ -237,21 +247,9 @@ class MainActivity : AppCompatActivity() {
             binding.webPlayer.layoutParams = params
             binding.webPlayer.requestLayout()
 
-            // Hide YouTube UI chrome via JS, keep only video
-            binding.webPlayer.evaluateJavascript("""
-                (function() {
-                    var style = document.getElementById('pip-style');
-                    if (!style) {
-                        style = document.createElement('style');
-                        style.id = 'pip-style';
-                        style.innerHTML = '#masthead-container, .ytp-chrome-top, .ytp-chrome-bottom, #below, #secondary, #comments, ytd-app > * > ytd-page-manager { display: none !important; } video { width: 100vw !important; height: 100vh !important; object-fit: contain; position: fixed; top:0; left:0; z-index:9999; background:#000; }';
-                        document.head.appendChild(style);
-                    }
-                })();
-            """.trimIndent(), null)
+
 
         } else {
-            // Restore layout
             val params = binding.webPlayer.layoutParams as ConstraintLayout.LayoutParams
             params.topToTop = ConstraintLayout.LayoutParams.UNSET
             params.topToBottom = binding.topBar.id
@@ -266,11 +264,10 @@ class MainActivity : AppCompatActivity() {
             binding.tabLayout.isVisible = currentVideoId != null
             binding.fragmentContainer.isVisible = currentVideoId != null
 
-            // Remove the PiP CSS override
             binding.webPlayer.evaluateJavascript("""
                 (function() {
-                    var style = document.getElementById('pip-style');
-                    if (style) style.remove();
+                    var s = document.getElementById('pip-style');
+                    if (s) s.remove();
                 })();
             """.trimIndent(), null)
         }
