@@ -218,73 +218,7 @@ class MainActivity : AppCompatActivity() {
         binding.webPlayer.destroy()
     }
 }
-        binding = ActivityMainBinding.inflate(layoutInflater)
-        setContentView(binding.root)
-
-        setupYouTubePlayer()
-        setupUrlInput()
-        setupThemeToggle()
-        setupPipButton()
-        setupTabs()
-        setupFragments()
-        handleIntent(intent)
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        handleIntent(intent)
-    }
-
-    private fun handleIntent(intent: Intent?) {
-        val data: Uri? = intent?.data
-        if (data != null) {
-            val url = data.toString()
-            binding.urlInputField.setText(url)
-            loadVideo(url)
-        }
-    }
-
-    private fun setupYouTubePlayer() {
-        lifecycle.addObserver(binding.youtubePlayerView)
-        val iFramePlayerOptions = IFramePlayerOptions.Builder()
-            .controls(1)
-            .rel(0)
-            .build()
-        binding.youtubePlayerView.initialize(object : AbstractYouTubePlayerListener() {
-            override fun onReady(youTubePlayer: YouTubePlayer) {
-                this@MainActivity.youTubePlayer = youTubePlayer
-            }
-        }, iFramePlayerOptions)
-    }
-
-    private fun setupUrlInput() {
-        binding.btnLoad.setOnClickListener {
-            val url = binding.urlInputField.text.toString().trim()
-            if (url.isNotEmpty()) loadVideo(url)
-            else Toast.makeText(this, "請輸入 YouTube 網址", Toast.LENGTH_SHORT).show()
-        }
-        binding.urlInputField.setOnEditorActionListener { _, _, _ ->
-            val url = binding.urlInputField.text.toString().trim()
-            if (url.isNotEmpty()) loadVideo(url)
-            true
-        }
-    }
-
-    private fun loadVideo(url: String) {
-        val videoId = YouTubeUrlParser.extractVideoId(url)
-        if (videoId == null) {
-            Toast.makeText(this, "無效的 YouTube 網址", Toast.LENGTH_SHORT).show()
-            return
-        }
-        currentVideoId = videoId
-        val isLive = YouTubeUrlParser.isLiveStream(url)
-        youTubePlayer?.loadVideo(videoId, 0f)
-        commentsFragment.loadComments(videoId)
-        chatFragment.setVideoId(videoId, isLive)
-        binding.tabLayout.isVisible = true
-        binding.fragmentContainer.isVisible = true
-        binding.btnPip.isVisible = true
-        if (isLive) binding.tabLayout.selectTab(binding.tabLayout.getTabAt(1))
+inding.tabLayout.selectTab(binding.tabLayout.getTabAt(1))
         else binding.tabLayout.selectTab(binding.tabLayout.getTabAt(0))
     }
 
