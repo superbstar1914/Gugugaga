@@ -190,15 +190,31 @@ class MainActivity : AppCompatActivity() {
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         if (isInPictureInPictureMode) {
+            // Hide everything except the video WebView
             binding.topBar.visibility = View.GONE
             binding.urlInputCard.visibility = View.GONE
             binding.tabLayout.visibility = View.GONE
             binding.fragmentContainer.visibility = View.GONE
+            // Make webPlayer fill the entire screen for PiP
+            val params = binding.webPlayer.layoutParams as androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
+            params.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+            params.dimensionRatio = null
+            params.height = 0
+            params.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID
+            binding.webPlayer.layoutParams = params
         } else {
             binding.topBar.visibility = View.VISIBLE
             binding.urlInputCard.visibility = View.VISIBLE
             binding.tabLayout.isVisible = currentVideoId != null
             binding.fragmentContainer.isVisible = currentVideoId != null
+            // Restore webPlayer to 16:9 below topBar
+            val params = binding.webPlayer.layoutParams as androidx.constraintlayout.widget.ConstraintLayout.LayoutParams
+            params.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
+            params.topToBottom = binding.topBar.id
+            params.dimensionRatio = "16:9"
+            params.height = 0
+            params.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET
+            binding.webPlayer.layoutParams = params
         }
     }
 
