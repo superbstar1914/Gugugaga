@@ -50,6 +50,7 @@ class ChatFragment : Fragment() {
     fun setVideoId(id: String, live: Boolean) {
         videoId = id
         isLive = live
+        if (!::webView.isInitialized) return  // View not ready yet
         refreshView()
     }
 
@@ -71,6 +72,9 @@ class ChatFragment : Fragment() {
 
     override fun onDestroyView() {
         webView.destroy()
+        super.onDestroyView()
+    }
+}
         super.onDestroyView()
     }
 }
