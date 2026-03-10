@@ -3,7 +3,6 @@ set -e
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 APP="$REPO_ROOT/YTViewer/app/src/main"
 echo "📁 Repo: $REPO_ROOT"
-
 cat > "$APP/java/com/ytviewer/MainActivity.kt" << 'KTEOF'
 package com.ytviewer
 
@@ -207,19 +206,35 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent(), null)
     }
 
+    private var pipVideoRatio = Rational(16, 9)
+
     private fun injectPipCss(view: WebView?, callback: (() -> Unit)? = null) {
+        // Get video element bounds so we can set PiP aspect ratio correctly
         view?.evaluateJavascript("""
             (function() {
-                var CSS = '#masthead-container,ytd-masthead,#masthead,.ytp-chrome-top,.ytp-chrome-bottom,#below,#secondary,#comments,#panels,ytd-watch-flexy tp-yt-app-drawer,ytd-mini-guide-renderer { display:none !important; } #primary { max-width:100vw !important; } video { position:fixed !important; top:0 !important; left:0 !important; width:100vw !important; height:100vh !important; z-index:99999 !important; background:#000 !important; object-fit:contain !important; } body,html,#page-manager,ytd-app { background:#000 !important; overflow:hidden !important; margin:0 !important; padding:0 !important; }';
-                var s = document.getElementById('pip-hide');
-                if (!s) { s = document.createElement('style'); s.id = 'pip-hide'; document.head.appendChild(s); }
-                s.innerHTML = CSS;
                 var v = document.querySelector('video');
-                if (v) v.play();
+                if (v) {
+                    var r = v.getBoundingClientRect();
+                    return JSON.stringify({w: Math.round(r.width), h: Math.round(r.height), vw: v.videoWidth, vh: v.videoHeight});
+                }
+                return JSON.stringify({w:16, h:9, vw:16, vh:9});
             })();
-        """.trimIndent(), null)
-        callback?.invoke()
+        """.trimIndent()) { result ->
+            try {
+                val clean = result?.trim('"') ?: ""
+                val json = org.json.JSONObject(clean)
+                val vw = json.optInt("vw", 16).takeIf { it > 0 } ?: 16
+                val vh = json.optInt("vh", 9).takeIf { it > 0 } ?: 9
+                val gcd = gcd(vw, vh)
+                pipVideoRatio = Rational(vw / gcd, vh / gcd)
+            } catch (_: Exception) {
+                pipVideoRatio = Rational(16, 9)
+            }
+            callback?.invoke()
+        }
     }
+
+    private fun gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)
 
     private fun removePipCss(view: WebView?) {
         view?.evaluateJavascript("""
@@ -295,11 +310,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun enterPipMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // CSS is fire-and-forget — MUST NOT delay enterPictureInPictureMode
-            // Activity must be in resumed state, any postDelayed will cause crash
-            injectPipCss(binding.webPlayer, callback = null)
-            if (!isFinishing && !isDestroyed) {
-                enterPictureInPictureMode(buildPipParams())
+            // Get video ratio async, then enter PiP synchronously on main thread
+            injectPipCss(binding.webPlayer) {
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        enterPictureInPictureMode(buildPipParams())
+                    }
+                }
             }
         }
     }
@@ -325,14 +342,20 @@ class MainActivity : AppCompatActivity() {
             playPauseIntent
         )
         return PictureInPictureParams.Builder()
-            .setAspectRatio(Rational(16, 9))
+            .setAspectRatio(pipVideoRatio)
             .setActions(listOf(action))
             .build()
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (currentVideoId != null) enterPipMode()
+        // onUserLeaveHint: Activity still resumed, can enter PiP directly
+        // Skip async JS to avoid leaving resumed state before enterPictureInPictureMode
+        if (currentVideoId != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (!isFinishing && !isDestroyed) {
+                enterPictureInPictureMode(buildPipParams())
+            }
+        }
     }
 
     override fun onPictureInPictureModeChanged(
@@ -409,9 +432,8 @@ class MainActivity : AppCompatActivity() {
     }
 }
 KTEOF
-
 cd "$REPO_ROOT"
 git add -A
-git commit -m "fix: PiP crash on Home - remove postDelayed from enterPipMode"
+git commit -m "fix: PiP use actual video aspect ratio, fix Home crash"
 git push
 echo "✅ 完成！"
