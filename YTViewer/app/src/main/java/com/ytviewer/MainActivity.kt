@@ -86,8 +86,11 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            registerReceiver(pipReceiver, IntentFilter(ACTION_PLAY_PAUSE),
-                RECEIVER_NOT_EXPORTED)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(pipReceiver, IntentFilter(ACTION_PLAY_PAUSE), RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(pipReceiver, IntentFilter(ACTION_PLAY_PAUSE))
+            }
         }
     }
 
@@ -255,35 +258,24 @@ class MainActivity : AppCompatActivity() {
     private fun enterPipMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             // Inject CSS to hide YouTube chrome BEFORE entering PiP
+            // Inject CSS first (non-blocking), then immediately enter PiP
+            // Cannot call enterPictureInPictureMode inside JS callback (Activity not resumed)
             binding.webPlayer.evaluateJavascript("""
                 (function() {
                     var s = document.getElementById('pip-hide');
                     if (!s) {
                         s = document.createElement('style');
                         s.id = 'pip-hide';
-                        s.innerHTML = [
-                            '#masthead-container',
-                            'ytd-masthead',
-                            '.ytp-chrome-top',
-                            '.ytp-chrome-bottom',
-                            '#below',
-                            '#secondary',
-                            '#comments',
-                            'ytd-watch-flexy #secondary-inner',
-                            '#page-manager > ytd-watch-flexy #below'
-                        ].join(',') + '{ display:none !important; }' +
-                        'video { position:fixed !important; top:0 !important; left:0 !important; width:100vw !important; height:100vh !important; z-index:99999 !important; background:#000 !important; object-fit:contain !important; }' +
-                        'body, html { background:#000 !important; overflow:hidden !important; }';
+                        s.innerHTML = '#masthead-container,ytd-masthead,.ytp-chrome-top,.ytp-chrome-bottom,#below,#secondary,#comments,#panels,ytd-watch-flexy #secondary-inner { display:none !important; } video { position:fixed !important; top:0 !important; left:0 !important; width:100vw !important; height:100vh !important; z-index:99999 !important; background:#000 !important; object-fit:contain !important; } body,html { background:#000 !important; overflow:hidden !important; margin:0 !important; padding:0 !important; }';
                         document.head.appendChild(s);
                     }
                     var v = document.querySelector('video');
                     if (v) v.play();
                 })();
-            """.trimIndent()) {
-                // Enter PiP after CSS is applied
-                val pipParams = buildPipParams()
-                enterPictureInPictureMode(pipParams)
-            }
+            """.trimIndent(), null)
+            // Enter PiP synchronously — must be in resumed state, so call directly here
+            val pipParams = buildPipParams()
+            enterPictureInPictureMode(pipParams)
         }
     }
 
