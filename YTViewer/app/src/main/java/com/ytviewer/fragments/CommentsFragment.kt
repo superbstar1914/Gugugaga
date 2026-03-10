@@ -38,6 +38,7 @@ class CommentsFragment : Fragment() {
     }
 
     fun loadComments(videoId: String) {
+        if (!::tvLoading.isInitialized) return  // View not ready yet
         tvLoading.visibility = View.VISIBLE
         tvEmpty.visibility = View.GONE
         recyclerView.visibility = View.GONE
@@ -72,6 +73,56 @@ class CommentsFragment : Fragment() {
             }
         }
     }
+
+    private fun showApiKeyNote() {
+        tvEmpty.visibility = View.VISIBLE
+        tvEmpty.text = "📌 目前顯示範例留言。\n設定 YouTube Data API Key 可顯示真實留言。"
+        tvEmpty.setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0)
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        scope.cancel()
+    }
+}
+
+class CommentsAdapter(private val comments: List<Comment>) :
+    RecyclerView.Adapter<CommentsAdapter.CommentViewHolder>() {
+
+    class CommentViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+        val tvAuthor: TextView = view.findViewById(R.id.tvAuthor)
+        val tvComment: TextView = view.findViewById(R.id.tvComment)
+        val tvLikes: TextView = view.findViewById(R.id.tvLikes)
+        val tvDate: TextView = view.findViewById(R.id.tvDate)
+        val ivAvatar: ImageView = view.findViewById(R.id.ivAvatar)
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CommentViewHolder {
+        val view = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_comment, parent, false)
+        return CommentViewHolder(view)
+    }
+
+    override fun onBindViewHolder(holder: CommentViewHolder, position: Int) {
+        val comment = comments[position]
+        holder.tvAuthor.text = comment.authorName
+        holder.tvComment.text = comment.text
+        holder.tvLikes.text = "👍 ${comment.likeCount}"
+        holder.tvDate.text = comment.publishedAt
+
+        if (comment.authorAvatar.isNotEmpty()) {
+            Glide.with(holder.itemView.context)
+                .load(comment.authorAvatar)
+                .circleCrop()
+                .placeholder(R.drawable.ic_person)
+                .into(holder.ivAvatar)
+        } else {
+            holder.ivAvatar.setImageResource(R.drawable.ic_person)
+        }
+    }
+
+    override fun getItemCount() = comments.size
+    }    }
 
     private fun showApiKeyNote() {
         tvEmpty.visibility = View.VISIBLE
