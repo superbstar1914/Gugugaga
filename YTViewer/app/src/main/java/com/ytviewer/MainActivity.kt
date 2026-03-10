@@ -1,9 +1,15 @@
 package com.ytviewer
 
 import android.annotation.SuppressLint
+import android.app.PendingIntent
 import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
+import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +23,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.constraintlayout.widget.ConstraintLayout
@@ -33,10 +40,23 @@ class MainActivity : AppCompatActivity() {
     private var currentVideoId: String? = null
     private var isDarkMode = true
     private var lastTouchTime = 0L
-    private val touchWindowMs = 1500L // 1.5秒內有碰過才算使用者暫停
+    private val touchWindowMs = 600L
+    private var isVideoPaused = false
 
     private val commentsFragment = CommentsFragment()
     private val chatFragment = ChatFragment()
+
+    // PiP broadcast action
+    private val ACTION_PLAY_PAUSE = "com.ytviewer.PIP_PLAY_PAUSE"
+    private val REQUEST_PLAY_PAUSE = 1
+
+    private val pipReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == ACTION_PLAY_PAUSE) {
+                togglePlayPause()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,7 +70,7 @@ class MainActivity : AppCompatActivity() {
         setupTabs()
         setupFragments()
         handleIntent(intent)
-        // 預設載入 rickroll，延遲等 Fragment view 建立完成
+
         binding.root.post {
             val defaultUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
             binding.urlInputField.setText(defaultUrl)
@@ -61,6 +81,19 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleIntent(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            registerReceiver(pipReceiver, IntentFilter(ACTION_PLAY_PAUSE),
+                RECEIVER_NOT_EXPORTED)
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        try { unregisterReceiver(pipReceiver) } catch (_: Exception) {}
     }
 
     private fun handleIntent(intent: Intent?) {
@@ -88,11 +121,10 @@ class MainActivity : AppCompatActivity() {
                     "Chrome/120.0.0.0 Safari/537.36"
         }
 
-        // 記錄最後一次碰觸時間
         binding.webPlayer.setOnTouchListener { _, event ->
-            if (event.action == MotionEvent.ACTION_DOWN ||
-                event.action == MotionEvent.ACTION_MOVE) {
-                lastTouchTime = SystemClock.elapsedRealtime()
+            when (event.action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
+                    lastTouchTime = SystemClock.elapsedRealtime()
             }
             false
         }
@@ -106,23 +138,15 @@ class MainActivity : AppCompatActivity() {
         binding.webPlayer.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                injectAntiPauseJs(view)
+                injectJs(view)
             }
         }
     }
 
-    private fun injectAntiPauseJs(view: WebView?) {
-        // touchWindowMs 傳入 JS，暫停發生時若距離上次觸碰超過這個時間就阻擋
+    private fun injectJs(view: WebView?) {
         view?.evaluateJavascript("""
             (function() {
                 var TOUCH_WINDOW = $touchWindowMs;
-                var lastTouch = 0;
-
-                // Android 端的 touch 時間會透過 interface 傳入，
-                // 這裡改用 pointerdown 自行追蹤
-                document.addEventListener('pointerdown', function() {
-                    lastTouch = Date.now();
-                }, true);
 
                 // Override visibility API
                 Object.defineProperty(document, 'hidden', { get: function(){ return false; }, configurable: true });
@@ -132,26 +156,52 @@ class MainActivity : AppCompatActivity() {
                 function patchVideo(video) {
                     if (video._patched) return;
                     video._patched = true;
+
+                    // Track click on video (desktop YT uses click to toggle play)
+                    video.addEventListener('click', function() {
+                        window._lastTouch = Date.now();
+                    }, true);
+
                     video.addEventListener('pause', function() {
-                        var timeSinceTouch = Date.now() - lastTouch;
-                        // 300ms 內有碰過才是使用者主動暫停，否則是系統暫停要阻擋
-                        if (timeSinceTouch > 300) {
+                        var timeSinceTouch = Date.now() - (window._lastTouch || 0);
+                        // If touched within TOUCH_WINDOW = user paused, allow it
+                        if (timeSinceTouch > TOUCH_WINDOW) {
                             setTimeout(function(){ if(video.paused) video.play(); }, 80);
+                        } else {
+                            // Notify Android that user paused
+                            if (window.AndroidBridge) window.AndroidBridge.onUserPaused();
                         }
+                    });
+
+                    video.addEventListener('play', function() {
+                        if (window.AndroidBridge) window.AndroidBridge.onVideoPlaying();
                     });
                 }
 
-                // 立刻 patch 現有 video
+                // Also track clicks on YT pause button (it's outside the video element)
+                document.addEventListener('click', function() {
+                    window._lastTouch = Date.now();
+                }, true);
+
                 var v = document.querySelector('video');
                 if (v) patchVideo(v);
 
-                // 每 2 秒檢查有沒有新的 video 出現
                 var tries = 0;
                 var interval = setInterval(function() {
                     var v2 = document.querySelector('video');
-                    if (v2) patchVideo(v2);
+                    if (v2) { patchVideo(v2); }
                     if (++tries > 15) clearInterval(interval);
                 }, 2000);
+            })();
+        """.trimIndent(), null)
+    }
+
+    private fun togglePlayPause() {
+        binding.webPlayer.evaluateJavascript("""
+            (function() {
+                window._lastTouch = Date.now();
+                var v = document.querySelector('video');
+                if (v) { if (v.paused) v.play(); else v.pause(); }
             })();
         """.trimIndent(), null)
     }
@@ -204,25 +254,60 @@ class MainActivity : AppCompatActivity() {
 
     private fun enterPipMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Inject CSS to hide YouTube chrome BEFORE entering PiP
             binding.webPlayer.evaluateJavascript("""
                 (function() {
-                    var v = document.querySelector('video');
-                    if (v) v.play();
-                    // Theatre mode: hide all YouTube chrome so only video shows in PiP
-                    var s = document.getElementById('pip-style');
+                    var s = document.getElementById('pip-hide');
                     if (!s) {
                         s = document.createElement('style');
-                        s.id = 'pip-style';
-                        s.innerHTML = '#masthead-container, .ytp-chrome-top, .ytp-chrome-bottom, #below, #secondary, #comments, ytd-masthead, #page-manager > ytd-watch-flexy #secondary, ytd-watch-flexy #below { display: none !important; } video { width: 100vw !important; height: 100vh !important; object-fit: contain; position: fixed !important; top:0 !important; left:0 !important; z-index:99999; background:#000; }';
+                        s.id = 'pip-hide';
+                        s.innerHTML = [
+                            '#masthead-container',
+                            'ytd-masthead',
+                            '.ytp-chrome-top',
+                            '.ytp-chrome-bottom',
+                            '#below',
+                            '#secondary',
+                            '#comments',
+                            'ytd-watch-flexy #secondary-inner',
+                            '#page-manager > ytd-watch-flexy #below'
+                        ].join(',') + '{ display:none !important; }' +
+                        'video { position:fixed !important; top:0 !important; left:0 !important; width:100vw !important; height:100vh !important; z-index:99999 !important; background:#000 !important; object-fit:contain !important; }' +
+                        'body, html { background:#000 !important; overflow:hidden !important; }';
                         document.head.appendChild(s);
                     }
+                    var v = document.querySelector('video');
+                    if (v) v.play();
                 })();
-            """.trimIndent(), null)
-            val pipParams = PictureInPictureParams.Builder()
-                .setAspectRatio(Rational(16, 9))
-                .build()
-            enterPictureInPictureMode(pipParams)
+            """.trimIndent()) {
+                // Enter PiP after CSS is applied
+                val pipParams = buildPipParams()
+                enterPictureInPictureMode(pipParams)
+            }
         }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun buildPipParams(): PictureInPictureParams {
+        val playPauseIntent = PendingIntent.getBroadcast(
+            this, REQUEST_PLAY_PAUSE,
+            Intent(ACTION_PLAY_PAUSE),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val playPauseIcon = Icon.createWithResource(this,
+            if (isVideoPaused) android.R.drawable.ic_media_play
+            else android.R.drawable.ic_media_pause
+        )
+        val playPauseAction = RemoteAction(
+            playPauseIcon,
+            if (isVideoPaused) "播放" else "暫停",
+            if (isVideoPaused) "播放" else "暫停",
+            playPauseIntent
+        )
+        return PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+            .setActions(listOf(playPauseAction))
+            .build()
     }
 
     override fun onUserLeaveHint() {
@@ -248,10 +333,15 @@ class MainActivity : AppCompatActivity() {
             params.height = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT
             binding.webPlayer.layoutParams = params
             binding.webPlayer.requestLayout()
-
-
-
         } else {
+            // Remove PiP CSS
+            binding.webPlayer.evaluateJavascript("""
+                (function() {
+                    var s = document.getElementById('pip-hide');
+                    if (s) s.remove();
+                })();
+            """.trimIndent(), null)
+
             val params = binding.webPlayer.layoutParams as ConstraintLayout.LayoutParams
             params.topToTop = ConstraintLayout.LayoutParams.UNSET
             params.topToBottom = binding.topBar.id
@@ -265,13 +355,6 @@ class MainActivity : AppCompatActivity() {
             binding.urlInputCard.visibility = View.VISIBLE
             binding.tabLayout.isVisible = currentVideoId != null
             binding.fragmentContainer.isVisible = currentVideoId != null
-
-            binding.webPlayer.evaluateJavascript("""
-                (function() {
-                    var s = document.getElementById('pip-style');
-                    if (s) s.remove();
-                })();
-            """.trimIndent(), null)
         }
     }
 
