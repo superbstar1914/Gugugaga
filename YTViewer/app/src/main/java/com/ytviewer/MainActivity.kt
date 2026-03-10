@@ -17,6 +17,7 @@ import android.os.SystemClock
 import android.util.Rational
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -54,16 +55,22 @@ class MainActivity : AppCompatActivity() {
 
     private val pipReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == ACTION_PLAY_PAUSE) togglePlayPause()
+            if (intent?.action == ACTION_PLAY_PAUSE) {
+                togglePlayPause()
+            }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Edge-to-edge so topBar doesn't overlap system status bar
         WindowCompat.setDecorFitsSystemWindows(window, false)
+
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // Apply status bar inset to topBar so it sits below the status bar
         ViewCompat.setOnApplyWindowInsetsListener(binding.topBar) { view, insets ->
             val statusBar = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             view.updatePadding(top = statusBar.top)
@@ -156,10 +163,17 @@ class MainActivity : AppCompatActivity() {
         view?.evaluateJavascript("""
             (function() {
                 var TOUCH_WINDOW = $touchWindowMs;
+
+                // Override visibility API to prevent background pause
                 Object.defineProperty(document, 'hidden', { get: function(){ return false; }, configurable: true });
                 Object.defineProperty(document, 'visibilityState', { get: function(){ return 'visible'; }, configurable: true });
                 document.addEventListener('visibilitychange', function(e){ e.stopImmediatePropagation(); }, true);
-                document.addEventListener('click', function() { window._lastTouch = Date.now(); }, true);
+
+                // Track all clicks as potential user interaction
+                document.addEventListener('click', function() {
+                    window._lastTouch = Date.now();
+                }, true);
+
                 function patchVideo(video) {
                     if (video._patched) return;
                     video._patched = true;
@@ -170,10 +184,16 @@ class MainActivity : AppCompatActivity() {
                         }
                     });
                 }
-                new MutationObserver(function() {
+
+                // MutationObserver to catch dynamically loaded video element
+                var observer = new MutationObserver(function() {
                     var v = document.querySelector('video');
-                    if (v) patchVideo(v);
-                }).observe(document.documentElement, { childList: true, subtree: true });
+                    if (v) { patchVideo(v); }
+                });
+                observer.observe(document.body || document.documentElement, {
+                    childList: true, subtree: true
+                });
+
                 var v = document.querySelector('video');
                 if (v) patchVideo(v);
             })();
@@ -183,20 +203,24 @@ class MainActivity : AppCompatActivity() {
     private fun injectPipCss(view: WebView?, callback: (() -> Unit)? = null) {
         view?.evaluateJavascript("""
             (function() {
-                var CSS = '#masthead-container,ytd-masthead,#masthead,.ytp-chrome-top,.ytp-chrome-bottom,#below,#secondary,#comments,#panels { display:none !important; } video { position:fixed !important; top:0 !important; left:0 !important; width:100vw !important; height:100vh !important; z-index:99999 !important; background:#000 !important; object-fit:contain !important; } body,html { background:#000 !important; overflow:hidden !important; margin:0 !important; padding:0 !important; }';
-                var s = document.getElementById('pip-hide') || document.createElement('style');
-                s.id = 'pip-hide';
+                var CSS = '#masthead-container,ytd-masthead,#masthead,.ytp-chrome-top,.ytp-chrome-bottom,#below,#secondary,#comments,#panels,ytd-watch-flexy tp-yt-app-drawer,ytd-mini-guide-renderer { display:none !important; } #primary { max-width:100vw !important; } video { position:fixed !important; top:0 !important; left:0 !important; width:100vw !important; height:100vh !important; z-index:99999 !important; background:#000 !important; object-fit:contain !important; } body,html,#page-manager,ytd-app { background:#000 !important; overflow:hidden !important; margin:0 !important; padding:0 !important; }';
+                var s = document.getElementById('pip-hide');
+                if (!s) { s = document.createElement('style'); s.id = 'pip-hide'; document.head.appendChild(s); }
                 s.innerHTML = CSS;
-                document.head.appendChild(s);
                 var v = document.querySelector('video');
                 if (v) v.play();
-                return 'ok';
             })();
-        """.trimIndent()) { callback?.invoke() }
+        """.trimIndent(), null)
+        callback?.invoke()
     }
 
     private fun removePipCss(view: WebView?) {
-        view?.evaluateJavascript("document.getElementById('pip-hide')?.remove();", null)
+        view?.evaluateJavascript("""
+            (function() {
+                var s = document.getElementById('pip-hide');
+                if (s) s.remove();
+            })();
+        """.trimIndent(), null)
     }
 
     private fun togglePlayPause() {
@@ -204,10 +228,12 @@ class MainActivity : AppCompatActivity() {
             (function() {
                 window._lastTouch = Date.now();
                 var v = document.querySelector('video');
-                if (v) { if (v.paused) v.play(); else v.pause(); }
+                if (!v) return;
+                if (v.paused) { v.play(); } else { v.pause(); }
             })();
         """.trimIndent(), null)
         isVideoPaused = !isVideoPaused
+        // Update PiP action button icon
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             setPictureInPictureParams(buildPipParams())
         }
@@ -262,29 +288,35 @@ class MainActivity : AppCompatActivity() {
 
     private fun enterPipMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            injectPipCss(binding.webPlayer) {
-                binding.root.postDelayed({
-                    if (!isFinishing && !isDestroyed) {
-                        enterPictureInPictureMode(buildPipParams())
-                    }
-                }, 150)
+            // CSS is fire-and-forget — MUST NOT delay enterPictureInPictureMode
+            // Activity must be in resumed state, any postDelayed will cause crash
+            injectPipCss(binding.webPlayer, callback = null)
+            if (!isFinishing && !isDestroyed) {
+                enterPictureInPictureMode(buildPipParams())
             }
         }
     }
 
     private fun buildPipParams(): PictureInPictureParams {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) throw IllegalStateException()
-        val intent = PendingIntent.getBroadcast(
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            throw IllegalStateException("PiP requires API 26+")
+        }
+        val playPauseIntent = PendingIntent.getBroadcast(
             this, REQUEST_PLAY_PAUSE,
             Intent(ACTION_PLAY_PAUSE).setPackage(packageName),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val icon = Icon.createWithResource(this,
+        val icon = Icon.createWithResource(
+            this,
             if (isVideoPaused) android.R.drawable.ic_media_play
-            else android.R.drawable.ic_media_pause)
-        val action = RemoteAction(icon,
+            else android.R.drawable.ic_media_pause
+        )
+        val action = RemoteAction(
+            icon,
             if (isVideoPaused) "播放" else "暫停",
-            if (isVideoPaused) "播放" else "暫停", intent)
+            if (isVideoPaused) "播放" else "暫停",
+            playPauseIntent
+        )
         return PictureInPictureParams.Builder()
             .setAspectRatio(Rational(16, 9))
             .setActions(listOf(action))
@@ -305,6 +337,7 @@ class MainActivity : AppCompatActivity() {
             binding.urlInputCard.visibility = View.GONE
             binding.tabLayout.visibility = View.GONE
             binding.fragmentContainer.visibility = View.GONE
+
             val params = binding.webPlayer.layoutParams as ConstraintLayout.LayoutParams
             params.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
             params.topToBottom = ConstraintLayout.LayoutParams.UNSET
@@ -315,6 +348,7 @@ class MainActivity : AppCompatActivity() {
             binding.webPlayer.requestLayout()
         } else {
             removePipCss(binding.webPlayer)
+
             val params = binding.webPlayer.layoutParams as ConstraintLayout.LayoutParams
             params.topToTop = ConstraintLayout.LayoutParams.UNSET
             params.topToBottom = binding.topBar.id
@@ -323,6 +357,7 @@ class MainActivity : AppCompatActivity() {
             params.height = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT
             binding.webPlayer.layoutParams = params
             binding.webPlayer.requestLayout()
+
             binding.topBar.visibility = View.VISIBLE
             binding.urlInputCard.visibility = View.VISIBLE
             binding.tabLayout.isVisible = currentVideoId != null

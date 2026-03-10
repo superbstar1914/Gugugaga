@@ -1,15 +1,9 @@
 #!/bin/bash
-# 在 Codespace 終端機執行這個腳本，自動更新所有修改的檔案
-# 使用方法：bash patch.sh
-
+set -e
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 APP="$REPO_ROOT/YTViewer/app/src/main"
+echo "📁 Repo: $REPO_ROOT"
 
-echo "📁 Repo root: $REPO_ROOT"
-
-# =====================
-# MainActivity.kt
-# =====================
 cat > "$APP/java/com/ytviewer/MainActivity.kt" << 'KTEOF'
 package com.ytviewer
 
@@ -30,6 +24,7 @@ import android.os.SystemClock
 import android.util.Rational
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -67,16 +62,22 @@ class MainActivity : AppCompatActivity() {
 
     private val pipReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == ACTION_PLAY_PAUSE) togglePlayPause()
+            if (intent?.action == ACTION_PLAY_PAUSE) {
+                togglePlayPause()
+            }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Edge-to-edge so topBar doesn't overlap system status bar
         WindowCompat.setDecorFitsSystemWindows(window, false)
+
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // Apply status bar inset to topBar so it sits below the status bar
         ViewCompat.setOnApplyWindowInsetsListener(binding.topBar) { view, insets ->
             val statusBar = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             view.updatePadding(top = statusBar.top)
@@ -169,10 +170,17 @@ class MainActivity : AppCompatActivity() {
         view?.evaluateJavascript("""
             (function() {
                 var TOUCH_WINDOW = $touchWindowMs;
+
+                // Override visibility API to prevent background pause
                 Object.defineProperty(document, 'hidden', { get: function(){ return false; }, configurable: true });
                 Object.defineProperty(document, 'visibilityState', { get: function(){ return 'visible'; }, configurable: true });
                 document.addEventListener('visibilitychange', function(e){ e.stopImmediatePropagation(); }, true);
-                document.addEventListener('click', function() { window._lastTouch = Date.now(); }, true);
+
+                // Track all clicks as potential user interaction
+                document.addEventListener('click', function() {
+                    window._lastTouch = Date.now();
+                }, true);
+
                 function patchVideo(video) {
                     if (video._patched) return;
                     video._patched = true;
@@ -183,10 +191,16 @@ class MainActivity : AppCompatActivity() {
                         }
                     });
                 }
-                new MutationObserver(function() {
+
+                // MutationObserver to catch dynamically loaded video element
+                var observer = new MutationObserver(function() {
                     var v = document.querySelector('video');
-                    if (v) patchVideo(v);
-                }).observe(document.documentElement, { childList: true, subtree: true });
+                    if (v) { patchVideo(v); }
+                });
+                observer.observe(document.body || document.documentElement, {
+                    childList: true, subtree: true
+                });
+
                 var v = document.querySelector('video');
                 if (v) patchVideo(v);
             })();
@@ -196,20 +210,24 @@ class MainActivity : AppCompatActivity() {
     private fun injectPipCss(view: WebView?, callback: (() -> Unit)? = null) {
         view?.evaluateJavascript("""
             (function() {
-                var CSS = '#masthead-container,ytd-masthead,#masthead,.ytp-chrome-top,.ytp-chrome-bottom,#below,#secondary,#comments,#panels { display:none !important; } video { position:fixed !important; top:0 !important; left:0 !important; width:100vw !important; height:100vh !important; z-index:99999 !important; background:#000 !important; object-fit:contain !important; } body,html { background:#000 !important; overflow:hidden !important; margin:0 !important; padding:0 !important; }';
-                var s = document.getElementById('pip-hide') || document.createElement('style');
-                s.id = 'pip-hide';
+                var CSS = '#masthead-container,ytd-masthead,#masthead,.ytp-chrome-top,.ytp-chrome-bottom,#below,#secondary,#comments,#panels,ytd-watch-flexy tp-yt-app-drawer,ytd-mini-guide-renderer { display:none !important; } #primary { max-width:100vw !important; } video { position:fixed !important; top:0 !important; left:0 !important; width:100vw !important; height:100vh !important; z-index:99999 !important; background:#000 !important; object-fit:contain !important; } body,html,#page-manager,ytd-app { background:#000 !important; overflow:hidden !important; margin:0 !important; padding:0 !important; }';
+                var s = document.getElementById('pip-hide');
+                if (!s) { s = document.createElement('style'); s.id = 'pip-hide'; document.head.appendChild(s); }
                 s.innerHTML = CSS;
-                document.head.appendChild(s);
                 var v = document.querySelector('video');
                 if (v) v.play();
-                return 'ok';
             })();
-        """.trimIndent()) { callback?.invoke() }
+        """.trimIndent(), null)
+        callback?.invoke()
     }
 
     private fun removePipCss(view: WebView?) {
-        view?.evaluateJavascript("document.getElementById('pip-hide')?.remove();", null)
+        view?.evaluateJavascript("""
+            (function() {
+                var s = document.getElementById('pip-hide');
+                if (s) s.remove();
+            })();
+        """.trimIndent(), null)
     }
 
     private fun togglePlayPause() {
@@ -217,10 +235,12 @@ class MainActivity : AppCompatActivity() {
             (function() {
                 window._lastTouch = Date.now();
                 var v = document.querySelector('video');
-                if (v) { if (v.paused) v.play(); else v.pause(); }
+                if (!v) return;
+                if (v.paused) { v.play(); } else { v.pause(); }
             })();
         """.trimIndent(), null)
         isVideoPaused = !isVideoPaused
+        // Update PiP action button icon
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             setPictureInPictureParams(buildPipParams())
         }
@@ -275,29 +295,35 @@ class MainActivity : AppCompatActivity() {
 
     private fun enterPipMode() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            injectPipCss(binding.webPlayer) {
-                binding.root.postDelayed({
-                    if (!isFinishing && !isDestroyed) {
-                        enterPictureInPictureMode(buildPipParams())
-                    }
-                }, 150)
+            // CSS is fire-and-forget — MUST NOT delay enterPictureInPictureMode
+            // Activity must be in resumed state, any postDelayed will cause crash
+            injectPipCss(binding.webPlayer, callback = null)
+            if (!isFinishing && !isDestroyed) {
+                enterPictureInPictureMode(buildPipParams())
             }
         }
     }
 
     private fun buildPipParams(): PictureInPictureParams {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) throw IllegalStateException()
-        val intent = PendingIntent.getBroadcast(
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            throw IllegalStateException("PiP requires API 26+")
+        }
+        val playPauseIntent = PendingIntent.getBroadcast(
             this, REQUEST_PLAY_PAUSE,
             Intent(ACTION_PLAY_PAUSE).setPackage(packageName),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val icon = Icon.createWithResource(this,
+        val icon = Icon.createWithResource(
+            this,
             if (isVideoPaused) android.R.drawable.ic_media_play
-            else android.R.drawable.ic_media_pause)
-        val action = RemoteAction(icon,
+            else android.R.drawable.ic_media_pause
+        )
+        val action = RemoteAction(
+            icon,
             if (isVideoPaused) "播放" else "暫停",
-            if (isVideoPaused) "播放" else "暫停", intent)
+            if (isVideoPaused) "播放" else "暫停",
+            playPauseIntent
+        )
         return PictureInPictureParams.Builder()
             .setAspectRatio(Rational(16, 9))
             .setActions(listOf(action))
@@ -318,6 +344,7 @@ class MainActivity : AppCompatActivity() {
             binding.urlInputCard.visibility = View.GONE
             binding.tabLayout.visibility = View.GONE
             binding.fragmentContainer.visibility = View.GONE
+
             val params = binding.webPlayer.layoutParams as ConstraintLayout.LayoutParams
             params.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
             params.topToBottom = ConstraintLayout.LayoutParams.UNSET
@@ -328,6 +355,7 @@ class MainActivity : AppCompatActivity() {
             binding.webPlayer.requestLayout()
         } else {
             removePipCss(binding.webPlayer)
+
             val params = binding.webPlayer.layoutParams as ConstraintLayout.LayoutParams
             params.topToTop = ConstraintLayout.LayoutParams.UNSET
             params.topToBottom = binding.topBar.id
@@ -336,6 +364,7 @@ class MainActivity : AppCompatActivity() {
             params.height = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT
             binding.webPlayer.layoutParams = params
             binding.webPlayer.requestLayout()
+
             binding.topBar.visibility = View.VISIBLE
             binding.urlInputCard.visibility = View.VISIBLE
             binding.tabLayout.isVisible = currentVideoId != null
@@ -381,155 +410,8 @@ class MainActivity : AppCompatActivity() {
 }
 KTEOF
 
-# =====================
-# activity_main.xml
-# =====================
-cat > "$APP/res/layout/activity_main.xml" << 'XMLEOF'
-<?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#121212">
-
-    <LinearLayout
-        android:id="@+id/topBar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:paddingBottom="8dp"
-        android:minHeight="56dp"
-        android:background="#1E1E1E"
-        android:elevation="4dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="&#9654; YTViewer"
-            android:textSize="20sp"
-            android:textStyle="bold"
-            android:textColor="#FFFFFF"
-            android:fontFamily="monospace" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnPip"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:text="PIP"
-            android:textSize="11sp"
-            android:visibility="gone"
-            android:layout_marginEnd="8dp" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnTheme"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            app:icon="@drawable/ic_dark_mode"
-            app:iconSize="22dp"
-            app:iconPadding="0dp"
-            android:padding="0dp"
-            android:minWidth="0dp" />
-
-    </LinearLayout>
-
-    <WebView
-        android:id="@+id/webPlayer"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        app:layout_constraintTop_toBottomOf="@id/topBar"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintDimensionRatio="16:9" />
-
-    <com.google.android.material.card.MaterialCardView
-        android:id="@+id/urlInputCard"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
-        android:layout_marginEnd="12dp"
-        android:layout_marginTop="10dp"
-        app:cardCornerRadius="12dp"
-        app:cardElevation="3dp"
-        app:cardBackgroundColor="#1E1E1E"
-        app:layout_constraintTop_toBottomOf="@id/webPlayer"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:padding="10dp"
-            android:gravity="center_vertical">
-
-            <com.google.android.material.textfield.TextInputLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
-                android:hint="貼上 YouTube 影片 / 直播網址"
-                android:layout_marginEnd="8dp">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/urlInputField"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="textUri"
-                    android:imeOptions="actionGo"
-                    android:maxLines="1"
-                    android:textSize="13sp"
-                    android:textColor="#FFFFFF" />
-
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnLoad"
-                android:layout_width="wrap_content"
-                android:layout_height="48dp"
-                android:text="載入"
-                android:textSize="13sp"
-                app:cornerRadius="8dp" />
-
-        </LinearLayout>
-    </com.google.android.material.card.MaterialCardView>
-
-    <com.google.android.material.tabs.TabLayout
-        android:id="@+id/tabLayout"
-        android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:layout_marginTop="8dp"
-        app:tabMode="fixed"
-        app:tabGravity="fill"
-        app:layout_constraintTop_toBottomOf="@id/urlInputCard"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        android:visibility="gone" />
-
-    <FrameLayout
-        android:id="@+id/fragmentContainer"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        app:layout_constraintTop_toBottomOf="@id/tabLayout"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        android:visibility="gone" />
-
-</androidx.constraintlayout.widget.ConstraintLayout>
-XMLEOF
-
-echo ""
-echo "✅ 所有檔案更新完成！"
-echo ""
-echo "現在執行："
-echo "  cd $(git rev-parse --show-toplevel)/YTViewer && git add -A && git commit -m 'fix: status bar, PiP CSS, pause logic' && git push"
+cd "$REPO_ROOT"
+git add -A
+git commit -m "fix: PiP crash on Home - remove postDelayed from enterPipMode"
+git push
+echo "✅ 完成！"
