@@ -49,11 +49,13 @@ class MainActivity : AppCompatActivity() {
         setupPipButton()
         setupTabs()
         setupFragments()
-        // 預設載入 rickroll
-        val defaultUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        binding.urlInputField.setText(defaultUrl)
-        loadVideo(defaultUrl)
         handleIntent(intent)
+        // 預設載入 rickroll，延遲等 Fragment view 建立完成
+        binding.root.post {
+            val defaultUrl = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            binding.urlInputField.setText(defaultUrl)
+            loadVideo(defaultUrl)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -251,6 +253,65 @@ class MainActivity : AppCompatActivity() {
 
         } else {
             val params = binding.webPlayer.layoutParams as ConstraintLayout.LayoutParams
+            params.topToTop = ConstraintLayout.LayoutParams.UNSET
+            params.topToBottom = binding.topBar.id
+            params.bottomToBottom = ConstraintLayout.LayoutParams.UNSET
+            params.dimensionRatio = "16:9"
+            params.height = ConstraintLayout.LayoutParams.MATCH_CONSTRAINT
+            binding.webPlayer.layoutParams = params
+            binding.webPlayer.requestLayout()
+
+            binding.topBar.visibility = View.VISIBLE
+            binding.urlInputCard.visibility = View.VISIBLE
+            binding.tabLayout.isVisible = currentVideoId != null
+            binding.fragmentContainer.isVisible = currentVideoId != null
+
+            binding.webPlayer.evaluateJavascript("""
+                (function() {
+                    var s = document.getElementById('pip-style');
+                    if (s) s.remove();
+                })();
+            """.trimIndent(), null)
+        }
+    }
+
+    private fun setupTabs() {
+        binding.tabLayout.addTab(binding.tabLayout.newTab().setText("💬 留言"))
+        binding.tabLayout.addTab(binding.tabLayout.newTab().setText("🔴 聊天室"))
+        binding.tabLayout.isVisible = false
+        binding.tabLayout.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab) {
+                when (tab.position) {
+                    0 -> showFragment(commentsFragment)
+                    1 -> showFragment(chatFragment)
+                }
+            }
+            override fun onTabUnselected(tab: TabLayout.Tab) {}
+            override fun onTabReselected(tab: TabLayout.Tab) {}
+        })
+    }
+
+    private fun setupFragments() {
+        supportFragmentManager.beginTransaction()
+            .add(R.id.fragmentContainer, commentsFragment)
+            .add(R.id.fragmentContainer, chatFragment)
+            .hide(chatFragment)
+            .commit()
+    }
+
+    private fun showFragment(fragment: androidx.fragment.app.Fragment) {
+        val transaction = supportFragmentManager.beginTransaction()
+        supportFragmentManager.fragments.forEach { transaction.hide(it) }
+        transaction.show(fragment)
+        transaction.commit()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        binding.webPlayer.destroy()
+    }
+}
+.layoutParams as ConstraintLayout.LayoutParams
             params.topToTop = ConstraintLayout.LayoutParams.UNSET
             params.topToBottom = binding.topBar.id
             params.bottomToBottom = ConstraintLayout.LayoutParams.UNSET
