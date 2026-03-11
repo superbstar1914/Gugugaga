@@ -201,21 +201,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun injectPipCss(view: WebView?, callback: (() -> Unit)? = null) {
-        // Scroll to video element and hide all surrounding UI via CSS
+        // Get video element's position in the WebView so we can use sourceRectHint
         view?.evaluateJavascript("""
             (function() {
                 var v = document.querySelector('video');
-                if (v) {
-                    var r = v.getBoundingClientRect();
-                    window.scrollTo(0, window.scrollY + r.top);
-                }
-                var s = document.getElementById('pip-hide');
-                if (!s) { s = document.createElement('style'); s.id = 'pip-hide'; document.head.appendChild(s); }
-                s.innerHTML = '#masthead-container,ytd-masthead,#masthead { display:none !important; } #movie_player { position:fixed !important; top:0 !important; left:0 !important; width:100vw !important; height:100vh !important; z-index:99999 !important; background:#000 !important; } video { width:100% !important; height:100% !important; } #below,#secondary,#comments,#panels { display:none !important; } body,html { overflow:hidden !important; background:#000 !important; }';
+                if (!v) return '0,0,0,0';
+                var r = v.getBoundingClientRect();
+                var dpr = window.devicePixelRatio || 1;
+                return Math.round(r.left*dpr)+','+Math.round(r.top*dpr)+','+Math.round(r.right*dpr)+','+Math.round(r.bottom*dpr);
             })();
-        """.trimIndent(), null)
-        callback?.invoke()
+        """.trimIndent()) { result ->
+            try {
+                val clean = result?.trim('"') ?: "0,0,0,0"
+                val parts = clean.split(",").map { it.trim().toInt() }
+                if (parts.size == 4 && parts[2] > parts[0] && parts[3] > parts[1]) {
+                    pipSourceRect = android.graphics.Rect(parts[0], parts[1], parts[2], parts[3])
+                }
+            } catch (_: Exception) {}
+            callback?.invoke()
+        }
     }
+
+    private var pipSourceRect: android.graphics.Rect? = null
 
     private fun removePipCss(view: WebView?) {
         view?.evaluateJavascript("""
@@ -322,10 +329,13 @@ class MainActivity : AppCompatActivity() {
             if (isVideoPaused) "播放" else "暫停",
             playPauseIntent
         )
-        return PictureInPictureParams.Builder()
+        val builder = PictureInPictureParams.Builder()
             .setAspectRatio(Rational(16, 9))
             .setActions(listOf(action))
-            .build()
+        // sourceRectHint tells the system exactly which part of the window is the video
+        // This makes the PiP animation start from the video, and clips to that region
+        pipSourceRect?.let { builder.setSourceRectHint(it) }
+        return builder.build()
     }
 
     override fun onUserLeaveHint() {
