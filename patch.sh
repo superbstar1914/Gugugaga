@@ -205,43 +205,22 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent(), null)
     }
 
-    private var pipVideoRatio = Rational(16, 9)
-
     private fun injectPipCss(view: WebView?, callback: (() -> Unit)? = null) {
-        // Get video element bounds so we can set PiP aspect ratio correctly
+        // Scroll to video element and hide all surrounding UI via CSS
         view?.evaluateJavascript("""
             (function() {
                 var v = document.querySelector('video');
                 if (v) {
                     var r = v.getBoundingClientRect();
-                    return JSON.stringify({w: Math.round(r.width), h: Math.round(r.height), vw: v.videoWidth, vh: v.videoHeight});
+                    window.scrollTo(0, window.scrollY + r.top);
                 }
-                return JSON.stringify({w:16, h:9, vw:16, vh:9});
+                var s = document.getElementById('pip-hide');
+                if (!s) { s = document.createElement('style'); s.id = 'pip-hide'; document.head.appendChild(s); }
+                s.innerHTML = '#masthead-container,ytd-masthead,#masthead { display:none !important; } #movie_player { position:fixed !important; top:0 !important; left:0 !important; width:100vw !important; height:100vh !important; z-index:99999 !important; background:#000 !important; } video { width:100% !important; height:100% !important; } #below,#secondary,#comments,#panels { display:none !important; } body,html { overflow:hidden !important; background:#000 !important; }';
             })();
-        """.trimIndent()) { result ->
-            try {
-                val clean = result?.trim('"') ?: ""
-                val json = org.json.JSONObject(clean)
-                val vw = json.optInt("vw", 16).takeIf { it > 0 } ?: 16
-                val vh = json.optInt("vh", 9).takeIf { it > 0 } ?: 9
-                val bw = json.optInt("w", 0)
-                val bh = json.optInt("h", 0)
-                val gcd = gcd(vw, vh)
-                pipVideoRatio = Rational(vw / gcd, vh / gcd)
-                runOnUiThread {
-                    Toast.makeText(this, "video: ${vw}x${vh}, rect: ${bw}x${bh}, ratio: ${vw/gcd}:${vh/gcd}", Toast.LENGTH_LONG).show()
-                }
-            } catch (e: Exception) {
-                pipVideoRatio = Rational(16, 9)
-                runOnUiThread {
-                    Toast.makeText(this, "JS error: ${result}", Toast.LENGTH_LONG).show()
-                }
-            }
-            callback?.invoke()
-        }
+        """.trimIndent(), null)
+        callback?.invoke()
     }
-
-    private fun gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)
 
     private fun removePipCss(view: WebView?) {
         view?.evaluateJavascript("""
@@ -349,7 +328,7 @@ class MainActivity : AppCompatActivity() {
             playPauseIntent
         )
         return PictureInPictureParams.Builder()
-            .setAspectRatio(pipVideoRatio)
+            .setAspectRatio(Rational(16, 9))
             .setActions(listOf(action))
             .build()
     }
@@ -441,6 +420,6 @@ class MainActivity : AppCompatActivity() {
 KTEOF
 cd "$REPO_ROOT"
 git add -A
-git commit -m "debug: show video dimensions in Toast"
+git commit -m "fix: PiP scroll to video + fix movie_player position"
 git push
 echo "✅ 完成！"
