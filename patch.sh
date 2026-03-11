@@ -2,7 +2,6 @@
 set -e
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 APP="$REPO_ROOT/YTViewer/app/src/main"
-echo "📁 Repo: $REPO_ROOT"
 cat > "$APP/java/com/ytviewer/MainActivity.kt" << 'KTEOF'
 package com.ytviewer
 
@@ -225,10 +224,18 @@ class MainActivity : AppCompatActivity() {
                 val json = org.json.JSONObject(clean)
                 val vw = json.optInt("vw", 16).takeIf { it > 0 } ?: 16
                 val vh = json.optInt("vh", 9).takeIf { it > 0 } ?: 9
+                val bw = json.optInt("w", 0)
+                val bh = json.optInt("h", 0)
                 val gcd = gcd(vw, vh)
                 pipVideoRatio = Rational(vw / gcd, vh / gcd)
-            } catch (_: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "video: ${vw}x${vh}, rect: ${bw}x${bh}, ratio: ${vw/gcd}:${vh/gcd}", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
                 pipVideoRatio = Rational(16, 9)
+                runOnUiThread {
+                    Toast.makeText(this, "JS error: ${result}", Toast.LENGTH_LONG).show()
+                }
             }
             callback?.invoke()
         }
@@ -434,6 +441,6 @@ class MainActivity : AppCompatActivity() {
 KTEOF
 cd "$REPO_ROOT"
 git add -A
-git commit -m "fix: PiP use actual video aspect ratio, fix Home crash"
+git commit -m "debug: show video dimensions in Toast"
 git push
 echo "✅ 完成！"
